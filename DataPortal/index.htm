@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script type="text/javascript" src="https://code.jquery.com/jquery-latest.js"></script>
+<script>
+BaseURL = "/getdata";
+var jsondata;
+
+function DoDates() {	//uses current date
+MyForm = document.getElementById('MyForm');
+var now = new Date();	// Get today's date (and time)
+MyForm.StartDate.value = MyForm.EndDate.value = now.toISOString().substr(0,10);	//Convert date to first 10 chars of ISO format
+DateWind(MyForm);
+}
+				// A lot of this I am not using. This could be stripped, but is temperamental
+function DateWind(theform) {	// Calculates how many actual readings will called, at the moment incorrect - calculates how many readings for one location if all data sets were selected and each data set had only one meter in it
+var StartDate = new Date(theform.StartDate.value);	// Grab the form field contents (string) and convert into date object
+var EndDate = new Date(theform.EndDate.value);
+
+if (theform.IntegrationPeriod.value == "HalfHour") SecPerRead = 1800;
+else if (theform.IntegrationPeriod.value == "Hour") SecPerRead = 3600;
+else if (theform.IntegrationPeriod.value == "Day") SecPerRead = 86400;
+else if (theform.IntegrationPeriod.value == "Week") {	// DCS requires weeks to be from Monday to Sunday
+	SecPerRead = 604800;
+	StartDate.setDate( StartDate.getDay() == 0 ? StartDate.getDate() - 6 : StartDate.getDate() + 1-StartDate.getDay() );	// Wind back to Monday before. Sunday is day zero, day adjustment different for Sundays
+	EndDate.setDate(EndDate.getDate() + 7-EndDate.getDay());	// Sunday adjusts forwards
+	theform.StartDate.value = StartDate.toISOString().substr(0,10);	// Put the new date back in the form field for clarity
+	theform.EndDate.value = EndDate.toISOString().substr(0,10);	//ISO Time is YYYY-MM-DDTHH:MM:SS and so just need the first 10 characters
+}
+		//This next part is month - disabled for now but could be used if added in future
+else if (theform.IntegrationPeriod.value == "Month") {	// DCS requires months to be from the first to the last day of the calendar month
+	SecPerRead = 2628000;
+	StartDate.setMonth(StartDate.getMonth(),1);	// Wind back to 1st of month
+	EndDate.setMonth(EndDate.getMonth()+1,0);	// Adjust the EndDate forwards in time to the end of the month by moving to next month, and then day zero which becomes the last day of the month prior
+	theform.StartDate.value = StartDate.toISOString().substr(0,10);
+	theform.EndDate.value = EndDate.toISOString().substr(0,10);	// Put the new date back in the form field
+}
+else SecPerRead = 0;
+}
+function TitleCase1(str)  //this works on places
+{
+	return str.replace(/\w\S*/g, function(txt){return txt.charAt(0).toUpperCase() + txt.substr(1);});
+}
+function TitleCase2(str)  //this works on units
+{
+	return str.replace(/\w\S*/i, function(txt){return txt.charAt(0).toUpperCase() + txt.substr(1);});
+}
+
+function BuildTable(data, theform) {
+	var ListOfMeters = [];
+	j=0;
+	for (i = 0; i < theform.MeteredData.length; i++) {
+		if (theform.MeteredData[i].selected != " ") {
+			ListOfMeters[j] = toString(theform.MeteredData[i].selected.value)
+			j++;
+		}
+	}
+	var ListOfLocs = [];
+	j=0;
+	for (i = 0; i < theform.Locations.length; i++) {
+		if (theform.Locations[i].selected != " ") {
+			ListOfLocs[j] = toString(theform.Locations[i].value)
+			j++;
+		}
+	}
+	var ListOfWeather = [];
+	j=0;
+	for (i = 0; i < theform.WeatherData.length; i++) {
+		if (theform.WeatherData[i].selected != " ") {
+			ListOfWeather[j] = toString(theform.WeatherData[i].value)
+			j++;
+		}
+	}
+	var ListOfOccupancy = [];
+	j=0;
+	for (i = 0; i < theform.OccupancyData.length; i++) {
+		if (theform.OccupancyData[i].selected != " ") {
+			ListOfOccupancy[j] = toString(theform.OccupancyData[i].value)
+			j++;
+		}
+	}
+	var Sets = (ListOfMeters.concat(ListOfWeather)).concat(ListOfOccupancy);
+	tablehtml = "<table><tr><th>Time</th><th>Location</th>";
+	for (var i=0; i<(Object.keys(data[0]).length); i++){
+		if (Object.keys(data[0])[i] == 'Place' || Object.keys(data[0])[i] == 'Time'){  /* only want it to add columns of requested data, not extra time or place ones */
+			continue;
+		}
+		else {
+		tablehtml += "<th>" + TitleCase2(Object.keys(data[0])[i]) + "</th>"
+		}
+	}
+	tablehtml += "</tr>"
+	for (var i=0; i<data.length; i++) {
+		var d = new Date(data[i]['Time']);
+		tablehtml += "<tr><td>" + d.toUTCString() + "</td><td>" + TitleCase1(data[i]['Place']) + "</td>"
+		for (var j=0; j<(Object.keys(data[0]).length); j++){
+			if (Object.keys(data[0])[j] == 'Place' || Object.keys(data[0])[j] == 'Time'){
+				continue;
+			}
+			else {
+				if (typeof(data[i][Object.keys(data[j])[j]]) !== 'undefined'){
+					tablehtml += "<td>" + data[i][Object.keys(data[j])[j]].toFixed(3) + "</td>"    /*.toPrecision(3) or .toFixed(3) for sig figs or dec plas but doesn't work right now */
+				}
+				else {
+					tablehtml += "<td>" + "N/A" + "</td>"
+				}
+				}
+			}
+		
+		tablehtml += "</tr>"
+	}
+	tablehtml += "</table>";
+	document.getElementById('MyTable').innerHTML = tablehtml;
+}
+function GetData(theform) {
+var StartDate = new Date(theform.StartDate.value);
+var EndDate = new Date(theform.EndDate.value);
+if (StartDate > EndDate) {	// If the start date is after the end date, swap for clarity
+	var TmpDate = theform.StartDate.value;	// Temporary place to hold the date during the swap
+	theform.StartDate.value = theform.EndDate.value;
+	theform.EndDate.value = TmpDate;
+	StartDate = Date(theform.StartDate.value);	// Reload the javascript objects on the page
+	EndDate = Date(theform.EndDate.value);
+}
+var ListOfMeters = [];
+for (i = 0; i < theform.MeteredData.length; i++) {
+    if (theform.MeteredData[i].selected) {
+        ListOfMeters[i] = (theform.MeteredData[i].value)
+    }
+}
+var ListOfLocs = [];
+for (i = 0; i < theform.Locations.length; i++) {
+    if (theform.Locations[i].selected) {
+        ListOfLocs[i] = (theform.Locations[i].value)
+    }
+}
+var ListOfWeather = [];
+for (i = 0; i < theform.WeatherData.length; i++) {
+    if (theform.WeatherData[i].selected) {
+        ListOfWeather[i] = (theform.WeatherData[i].value)
+    }
+}
+var Dload = "False"
+if (theform.Download.checked){
+	Dload = "True"
+}
+function downloadCSV(csv, filename) {
+	var csvFile;
+	var downloadLink;
+	// CSV file
+	csvFile = new Blob([csv], {type: "text/csv"});
+	// Download link
+	downloadLink = document.createElement("a");
+	// File name
+	downloadLink.download = filename;
+	// Create a link to the file
+	downloadLink.href = window.URL.createObjectURL(csvFile);
+	// Hide download link
+	downloadLink.style.display = "none";
+	// Add the link to DOM
+	document.body.appendChild(downloadLink);
+	// Click download link
+	downloadLink.click();
+}
+
+// converts table data to csv
+function exportTableToCSV(filename) {
+	var csv = [];
+	var rows = document.querySelectorAll("table tr");
+	for (var i = 0; i < rows.length; i++) {
+		var row = [], cols = rows[i].querySelectorAll("td, th");
+		for (var j = 0; j < cols.length; j++) {
+		if (cols[j].innerText.toString().indexOf(",") !== -1){
+			var thiscell = cols[j].innerText.toString().replace(",", " -")
+			if (thiscell.indexOf(":") !== -1){  /* if the cell contains the date strip down to format recognised by excel */
+				thiscell = thiscell.slice(6); /* removes day of week */
+				thiscell = thiscell.slice(0, -4) /* removes GMT part */
+			}
+		}
+		else if (cols[j].innerText.toString().indexOf(",") == -1){
+			var thiscell = cols[j].innerText.toString()
+		}
+		row.push(thiscell);
+		}
+		csv.push(row.join(","));
+	}
+	// Download CSV file
+	downloadCSV(csv.join("\n"), filename);
+}
+var Parameters = { StartDate:theform.StartDate.value, EndDate:theform.EndDate.value, LocationSets:theform.LocationSets.value, IntegrationPeriod:theform.IntegrationPeriod.value, Locations:ListOfLocs, OccupancyData:theform.OccupancyData.value, WeatherData:ListOfWeather, MeteredData:ListOfMeters, Download:Dload};
+	$.ajax({
+		url: BaseURL,
+		type: 'GET',
+		dataType: 'json',
+		retryTimeout: 10,
+		retryCount: 0,
+		retryLimit: 10,
+		crossDomain: true,
+		data: Parameters,
+		contentType: 'application/json',
+		success: function(data, textStatus) {
+			console.log(textStatus);
+			jsondata = data;
+			BuildTable(jsondata, theform)
+		   if (Dload=="True"){
+			exportTableToCSV('portaldata.csv')
+		   };
+			},
+		error: function(jqXHR,textStatus,errorThrown) { console.log(textStatus+" "+errorThrown); document.getElementById('MyTable').innerHTML = textStatus+" "+errorThrown }
+	});
+}
+</script>
+<style>
+table {
+	font-family: "Trebuchet MS", Arial, Helvetica, sans-serif;
+	border-collapse: collapse;
+	width: 100%;
+}
+td, th {
+	border: 1px solid #ddd;
+	padding: 5px;
+}
+tr:nth-child(even) {background-color: #f2f2f2;}
+tr:hover {background-color: #cedcfd;}
+th {
+	padding-top: 5px;
+	padding-bottom: 5px;
+	text-align: left;
+	background-color: #317dee;
+	color: white;
+}
+.flex-container {
+    display: -webkit-flex;
+    display: flex;  
+    -webkit-flex-flow: row wrap;
+    flex-flow: row wrap;
+    text-align: left;
+}
+.flex-container > * {
+    padding: 10px;
+    -webkit-flex: 1 100%;
+    flex: 1 100%;
+}
+.article {
+    text-align: left;
+}
+.nav {background: #dae5f1;
+		font-family: "Trebuchet MS", Arial, Helvetica, sans-serif;}
+@media all and (min-width: 768px) {
+    .nav {text-align:left;-webkit-flex: none;flex: none;-webkit-order:1;order:1;}
+    .article {-webkit-flex: auto;flex: auto;-webkit-order:2;order:2;}
+}
+input[type="radio"]
+{
+	font-size: 11px;
+}
+/* The Modal (background) */
+.modal {
+	display: none; /* Hidden by default */
+	position: fixed; /* Stay in place */
+	z-index: 1; /* Sit on top */
+	padding-top: 100px; /* Location of the box */
+	left: 0;
+	top: 0;
+	width: 100%; /* Full width */
+	height: 100%; /* Full height */
+	overflow: auto; /* Enable scroll if needed */
+	background-color: rgb(0,0,0); /* Fallback color */
+	background-color: rgba(0,0,0,0.4); /* Black w/ opacity */
+}
+
+/* Modal Content */
+.modal-content {
+	position: relative;
+	overflow:auto;
+	top: 0%;
+	background-color: #fefefe;
+	margin: auto;
+	padding: 0;
+	border: 1px solid #888;
+	height: 85%;
+	width: 80%;
+	box-shadow: 0 4px 8px 0 rgba(0,0,0,0.2),0 6px 20px 0 rgba(0,0,0,0.19);
+	-webkit-animation-name: animatetop;
+	-webkit-animation-duration: 0.4s;
+	animation-name: animatetop;
+	animation-duration: 0.4s
+}
+
+/* Add Animation */
+@-webkit-keyframes animatetop {
+	from {top:-300px; opacity:0}
+	to {top:0; opacity:1}
+}
+
+@keyframes animatetop {
+	from {top:-300px; opacity:0}
+	to {top:0; opacity:1}
+}
+
+/* The Close Button */
+.close {
+	color: white;
+	float: right;
+	font-size: 28px;
+	font-weight: bold;
+}
+
+.close:hover,
+.close:focus {
+	color: #000;
+	text-decoration: none;
+	cursor: pointer;
+}
+
+.modal-header {
+	padding: 2px 16px;
+	background-color: #317dee;
+	color: white;
+}
+
+.modal-body {padding: 2px 16px;}
+
+.modal-footer {
+	/*display:none; *//*have set footer to hidden - looks out of place*/
+	padding: 2px 16px;
+	background-color: #317dee;
+	color: white;
+}
+</style>
+</head>
+<body onload="DoDates();">
+<div class="flex-container">
+<nav class="nav">
+<h2>Data Selection</h2>
+<form id="MyForm" oninput="DateWind(this)"><!--oninput="DateWind(this)" this was inside->
+<!-- "this" is the form itself -->
+<!-- Trigger/Open The Modal -->
+<button id="myBtn">Usage Guide</button>
+
+<!-- The Modal -->
+<div id="myModal" class="modal">
+	<!-- Modal content -->
+	<div class="modal-content">
+		<div class="modal-header">
+			<span class="close">&times;</span>
+			<h2>Interface Usage Guide and Information</h2>
+		</div>
+		<div class="modal-body">
+			<p><b><font size="5">Data Selection</font></b></p>
+			<p>Select the desired data by filling in <b><u>all</u></b> fields in the form. To select multiple entries from the scrolling menus, hold down Ctrl or Cmd button or drag mouse across selection.  If the date range selected is not compatible with the integration period chosen, the dates will automatically change to accomodate this. </p>
+			<p><b>Metered Data</b> comes from the Data Collection Server overseen by Mark Jarvis in the Estates Office. Smallest data measurement interval is half hourly. Quantity of metered data depends on age of individual meters. Original meters installed in Autumn 2008 so metered data does not extend back beyond this. </p>
+			<p><b>Weather Data</b> comes from the weather station on top of Science A block, and is overseen by academics from the engineering department. The data extends back to March 2011 and frequency of measurement is every minute. Any data returned with frequency greater than this has been averaged from the minute measurements.</p>
+			<p><b>Occupancy Data</b>/wifi device detection data shown here is collected by IT services. Frequency of measurement is every 15 minutes, and the number returned for each interval represents the number of wifi capable devices detected by the various wifi access points in that area. This includes devices that are connected, as well as ones which are not but are capable of connecting. Data returned with integration period greater than 15 minutes has been averaged. Data extends back to January 2017 but is comprised of averages until July 2017.</p>
+			<p><b>Location Categories</b> are provided to make it easier to find the desired building, but also to allow similar types of building to be more easily compared to each other. Most of the catgories are self explanitory. "Caters" contains buildings which contain substancial cafeterias or food outlets, "Maintenance" contains buidings like boiler houses or storage areas, and "Other" contains locations which do not fit into any other categories and would be difficult to compare to other locations.
+			<p><b>Data load speed</b> entirely depends on the quantity of data requested and being processed. Requesting a day of metered measurements with an integration period of half an hour will involve handling only 48 data points. For weather data averages have to be taken to create the data points, so the same integration period would involve handling 1440 data points, and therefore will take longer to generate the table/download. Selecting a day of every data set can take<b> up to 4 minutes</b> so be prepared to be patient.
+			<p><b><font size="5">Usage notes</font></b></p>
+			<p><b> Note #1 </b>- When the data range is chosen to include current time, the most recent entries can appear anomolous. For any metered data fields, data points which do not yet exist will return as 0, and for other fields as N/A. In the metered data there is a delay of approx. half an hour on data measurements. For this reason when working with metered data it may be sensible to exclude the one or two most recent entries from any analysis to avoid false 0 values being included.</p>
+			<p><b> Note #2 </b>- Sometimes a similar effect can occur in the weather data where the final entry of a requested data set does not appear. This is as a result of the averaging - if an integration period of a minute is chosen this can solve the problem, or it can be solved by using a larger date range.</p>
+			<p><b> Note #3 </b>- Even if you are only requesting weather data, which is the same for all locations, you must still select a location.</p>
+			<p><b> Note #4 </b>- If you select an integration period smaller than the measurement frequency of the data set you have chosen, it will return the data in its automatic frequency. If more than one set of data is requested, the cells corresponding to void times will show N/A, and the rest of the column will contain the correct data as usual.</p>
+			<p><b> Note #5 </b>- If you select a set of data which does not exist for a given location, the interface will simply return nothing, or where another location has been selected which does have the data set, the table will display N/A. </p>
+			<p><b> Note #6 </b>- You may come across some locations with misspelt names, for example "Social &amp; Dinning". This is because the names appear exactly as they do in the ITS system. </p>
+			<p><b> Note #5</b>- If something seems like it isn't working simplify your search criteria - it may be taking a long time or may be held up by a single complicated entry.</p>
+		</div>
+		<div class="modal-footer">
+			<h3 align="right">Alice Stamp, September 2017</h3>
+		</div>
+	</div>
+	
+</div>
+
+<br><br>
+	Start Date:
+	<input type="date" name="StartDate" required="True" step=1><br><!-- Browsers should provide a calender picker, but otherwise this is just a text box -->
+	End Date:
+	<input type="date" name="EndDate" required="False" step=1><br>
+		<!--Number of Readings: <output name="NumOfReads">-</output><br>-->
+		<!-- <input type="checkbox" name="Calibrated" value="True" checked>Calibrated<br>
+		 <input type="checkbox" name="Interpolated" value="True" checked>Interpolated<br>
+		 <input type="checkbox" name="UseLocalTime" value="True">Use Local Time<br> -->
+		Integration Period:
+		<select name="IntegrationPeriod"> <!-- Drop Down Menu -->
+			<option value="Minute">Minute</option>
+			<option value="QuarterHour">Quarter Hour</option>
+			<option value="HalfHour">Half Hour</option>
+			<option value="Hour" selected>Hour</option>
+			<option value="Day">Day</option>
+			<option value="Week">Week</option>
+			<!--<option value="Month">Month</option>-->
+		</select><br>
+		<!-- Source:
+		 <select name="Source">  Drop Down Menu
+		 <option value="Automatic" selected>Automatic</option>
+		 <option value="Manual">Manual</option>
+		 <option value="Merged">Merged</option>
+		 </select><br><br> -->
+		
+	<br>
+    Metered Data:
+    <br>
+    <select name="MeteredData" size=5 multiple>
+        <option value= "gas">Gas</option>
+        <option value= "water">Water</option>
+        <option value= "elec">Electricity</option>
+        <option value= "heat">Heating</option>
+        <option value= "cool">Cooling</option>
+    </select><br>
+    Weather Data:
+    <br>
+    <select name="WeatherData" size=5 multiple>
+        <option value= "wind_dir">Wind Direction</option>
+        <option value= "windspeed">Wind Speed</option>
+        <option value= "gustspeed">Wind Gust Speed</option>
+        <option value= "temp">Temperature</option>
+        <option value= "humidity">Relative Humidity</option>
+        <option value= "pressure">Pressure</option>
+        <option value= "solar">Sunlight</option>
+        <option value= "rain">Rainfall</option>
+    </select><br>
+    Occupancy Data:
+    <br>
+    <select name="OccupancyData" size=1 multiple>
+        <option value = "wifi">Wifi Device Detections<br>
+    </select><br><br>
+    
+    
+	Location(s): <br>
+    <input type="radio" name="LocationSets" value="All" onclick="htmlchanger()">All<br>
+    <input type="radio" name="LocationSets" value="Conferences" onclick="htmlchanger()">Conferences<br>
+    <input type="radio" name="LocationSets" value="Main" onclick="htmlchanger()">Main Campus<br>
+    <input type="radio" name="LocationSets" value="Residencies" onclick="htmlchanger()">Residencies<br>
+		
+	<select id="locationlist" name="Locations" multiple size=10 style="display:none"required="True">
+        
+    </select>
+    <br><br>
+	
+	<input type="checkbox" name="Download" value="True">Download data?<br>
+    
+    <script>
+		function download(filename, text) {
+			var pom = document.createElement('a');
+			pom.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
+			pom.setAttribute('download', filename);
+			
+			if (document.createEvent) {
+				var event = document.createEvent('MouseEvents');
+				event.initEvent('click', true, true);
+				pom.dispatchEvent(event);
+			}
+			else {
+				pom.click();
+			}
+		}
+		// Get the modal
+		var modal = document.getElementById('myModal');
+		// Get the button that opens the modal
+		var btn = document.getElementById("myBtn");
+		// Get the <span> element that closes the modal
+		var span = document.getElementsByClassName("close")[0];
+		// When the user clicks the button, open the modal
+		btn.onclick = function() {
+			modal.style.display = "block";
+		}
+	// When the user clicks on <span> (x), close the modal
+	span.onclick = function() {
+		modal.style.display = "none";
+	}
+	// When the user clicks anywhere outside of the modal, close it
+	window.onclick = function(event) {
+		if (event.target == modal) {
+			modal.style.display = "none";
+		}
+	}
+        loclist = {
+					"All" : ["Conference Center 1", "Conference Center 2", "Main Campus Building A", "Main Campus Building B", "Residential Block One", "Residential Block Two"],
+					"Conferences" : ["Conference Center 1", "Conference Center 2"],
+					"Main" : ["Main Campus Building A", "Main Campus Building B"],
+					"Residencies" : ["Residential Block One", "Residential Block Two"]};
+          // This list is actually very big but is shortened here
+	
+		//could generate this from xls - more efficient but very difficult - this is a temporary fix but would require maintenance when new places were added in. NOT PRACTICAL LONG TERM
+		
+        groups = document.getElementById("MyForm");
+    
+        function htmlchanger(){
+            rawhtml = "";
+            for (item in loclist[MyForm.LocationSets.value]){
+                rawhtml += "<option value='"+loclist[MyForm.LocationSets.value][item]+"'>"+loclist[MyForm.LocationSets.value][item]+"</option>"
+            }
+            document.getElementById("locationlist").style.display="block";
+            document.getElementById("locationlist").innerHTML = rawhtml;
+        }
+    </script>
+    
+	<!--*Due to granularity of different data sets, <br>occupancy data takes 2x as long to <br>process as metered  and weather takes <br>30x as long. -->
+    <br><br>
+	<input type="button" value="Get Data" name="BUTTON" onclick="GetData(this.parentElement)"><!-- Submitting is like following the link under the form "Action" but appending all of the field parameters after -->
+</form>
+</nav>
+<article class="article" id="MyTable"></article>
+</div>
+</body>
+</html>
