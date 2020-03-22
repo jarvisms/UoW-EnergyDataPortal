@@ -50,11 +50,16 @@ except IOError:
 def jsondatetime(dt):	# Converts datetime objects to JavaScript datetime notation so json supports it (with additional parameter)
 	return datetime.datetime.strftime(dt,'%Y-%m-%dT%H:%M:%S.%fZ')
 
+'''
 def adapt_datetime(dt): # Adapter so that SQLite3 can accept datetimes but store them in the db file as efficient integers
 	return int((dt - datetime.datetime(1970, 1, 1)).total_seconds())
 
 def convert_datetime(b): # Converter so that SQLite3 can retreive efficient integers and return them as datetimes
 	return datetime.datetime.fromtimestamp(int(b))
+
+sqlite3.register_adapter(datetime.datetime, adapt_datetime)
+sqlite3.register_converter("DATETIME", convert_datetime)
+'''
 
 class JSONGen(list):	# Create a subclass of list so that the json module will think its a list and encode it
  def __init__(self,gen,len=0):	# There will be two items, a standard generator to make appear as a list, and what should end up being the length of the list/generator, although this can be any number
@@ -68,9 +73,6 @@ class JSONGen(list):	# Create a subclass of list so that the json module will th
   return next(self.gen)
  def __len__(self):	# Gives the predicted length
   return self.len
-
-sqlite3.register_adapter(datetime.datetime, adapt_datetime)
-sqlite3.register_converter("DATETIME", convert_datetime)
 
 print 'Reading Excel spreadsheet...'
 #Load in dictionary with all information on location types and meters. Result is list of dictionaries 'LocsRef', with 'loc', and type-, wifi-, gas- etc lists eg 'wifilist', 'gaslist', 'eleclist'
@@ -186,7 +188,7 @@ def GetResults(FormResults):
 				for wifiid in TempStore[loc]['wifilist']:
 					WantId[wifiid] = loc
 			#cursor.execute('SELECT dateTime as "dateTime [DATETIME]", locId, count FROM WifiData WHERE (dateTime BETWEEN ? AND ?) AND (locId in (?))', (Start, End, ','.join(str(id) for id in WantId))) # TEST DATABASE
-			cursor.execute("SELECT dateTime,locId,count FROM WifiData WHERE (dateTime BETWEEN %s AND %s) AND (locId in %s)", (Start, End, WantId))	# REAL DATABASE ######## CHECK TO MAKE SURE DATES WORK WHEN DATABASES CHANGED '%Y-%m-%d %H:%M:%S' is MySQL format
+			cursor.execute("SELECT dateTime,locId,count FROM WifiData WHERE (dateTime BETWEEN %s AND %s) AND (locId in %s)", (Start, End, WantId.keys()))	# REAL DATABASE ######## CHECK TO MAKE SURE DATES WORK WHEN DATABASES CHANGED '%Y-%m-%d %H:%M:%S' is MySQL format
 			print "Items from WifiData SQL query:", cursor.rowcount
 		for row in cursor:	# row[0] should be the datetime (native), row[1] is the locId and row[2] the counts. May be possible to reference these by coloumn name rather than index. 
 			# No need for Null Check as the entry simply wouldn't exist
