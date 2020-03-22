@@ -1,8 +1,8 @@
 #!/usr/bin/env python
 # Remember to change EOL convention to suit Windows or Linux depending on where this will run
 print 'Importing Libraries...'
-#import MySQLdb	# REAL DATABASE
-import sqlite3	# TEST DATABASE
+import MySQLdb	# REAL DATABASE
+#import sqlite3	# TEST DATABASE
 import urllib2, base64, json, xlrd, datetime, csv
 from SocketServer import ThreadingTCPServer
 from SimpleHTTPServer import SimpleHTTPRequestHandler
@@ -174,8 +174,8 @@ def GetResults(FormResults):
 	if "occupancydata" in FormResults:
 		print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), 'Fetching Wifi data from SQL'
 		Occupancy = FormResults["occupancydata"]  #will need editing to add the [] if other occupancy set is added
-#		conn = MySQLdb.connect(SQLserver, SQLUser, SQLPassword, SQLdb)	# REAL DATABASE
-		conn=sqlite3.connect('EnergyDataPortal.db',detect_types=sqlite3.PARSE_DECLTYPES|sqlite3.PARSE_COLNAMES)	# TEST DATABASE
+		conn = MySQLdb.connect(SQLserver, SQLUser, SQLPassword, SQLdb)	# REAL DATABASE
+#		conn=sqlite3.connect('EnergyDataPortal.db',detect_types=sqlite3.PARSE_DECLTYPES|sqlite3.PARSE_COLNAMES)	# TEST DATABASE
 		cursor = conn.cursor()
 		if len(Locations) == 0:    #if place empty, retreive nothing
 			cursor = []	# Give an empty list so the for loop at the end doesn't crash
@@ -185,8 +185,8 @@ def GetResults(FormResults):
 			for loc in TempStore:
 				for wifiid in TempStore[loc]['wifilist']:
 					WantId[wifiid] = loc
-			cursor.execute('SELECT dateTime as "dateTime [DATETIME]", locId, count FROM WifiData WHERE (dateTime BETWEEN ? AND ?) AND (locId in (?))', (Start, End, ','.join(str(id) for id in WantId))) # TEST DATABASE
-#			cursor.execute("SELECT * FROM WifiData WHERE (dateTime BETWEEN %s AND %s) AND (locId in %s)", (Start, End, WantId))	# REAL DATABASE ######## CHECK TO MAKE SURE DATES WORK WHEN DATABASES CHANGED '%Y-%m-%d %H:%M:%S' is MySQL format
+			#cursor.execute('SELECT dateTime as "dateTime [DATETIME]", locId, count FROM WifiData WHERE (dateTime BETWEEN ? AND ?) AND (locId in (?))', (Start, End, ','.join(str(id) for id in WantId))) # TEST DATABASE
+			cursor.execute("SELECT dateTime,locId,count FROM WifiData WHERE (dateTime BETWEEN %s AND %s) AND (locId in %s)", (Start, End, WantId))	# REAL DATABASE ######## CHECK TO MAKE SURE DATES WORK WHEN DATABASES CHANGED '%Y-%m-%d %H:%M:%S' is MySQL format
 			print "Items from WifiData SQL query:", cursor.rowcount
 		for row in cursor:	# row[0] should be the datetime (native), row[1] is the locId and row[2] the counts. May be possible to reference these by coloumn name rather than index. 
 			# No need for Null Check as the entry simply wouldn't exist
@@ -201,15 +201,15 @@ def GetResults(FormResults):
 	if "weatherdata[]" in FormResults:
 		print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), 'Fetching Weather data from SQL'
 		Weather = FormResults["weatherdata[]"]	# Collects up the data requestd
-		front = 'SELECT datetime as "datetime [DATETIME]", '
-#		front = "SELECT datetime, "
-		back = " FROM RTWeather WHERE (datetime BETWEEN ? AND ?)" # TEST DATABASE
-#		back = " FROM RTWeather WHERE (datetime BETWEEN %s AND %s)"	# REAL DATABASE
+		#front = 'SELECT datetime as "datetime [DATETIME]", '
+		front = "SELECT datetime, "
+		#back = " FROM RTWeather WHERE (datetime BETWEEN ? AND ?)" # TEST DATABASE
+		back = " FROM RTWeather WHERE (datetime BETWEEN %s AND %s)"	# REAL DATABASE
 		command = front + ','.join(Weather) + back	# This will grab all weather items in one go
-#		conn = MySQLdb.connect(SQLserver, SQLUser, SQLPassword, SQLdb)	# REAL DATABASE
-		conn=sqlite3.connect('EnergyDataPortal.db',detect_types=sqlite3.PARSE_DECLTYPES|sqlite3.PARSE_COLNAMES)	# TEST DATABASE
+		conn = MySQLdb.connect(SQLserver, SQLUser, SQLPassword, SQLdb)	# REAL DATABASE
+		#conn=sqlite3.connect('EnergyDataPortal.db',detect_types=sqlite3.PARSE_DECLTYPES|sqlite3.PARSE_COLNAMES)	# TEST DATABASE
 		cursor = conn.cursor()
-		cursor.execute(command, (Start, End))	######## CHECK TO MAKE SURE DATES WORK WHEN DATABASES CHANGED '%Y-%m-%d %H:%M:%S' is MySQL format
+		cursor.execute(command, (Start, End))	# CHECK TO MAKE SURE DATES WORK WHEN DATABASES CHANGED '%Y-%m-%d %H:%M:%S' is MySQL format
 		print "Items from RTWeather SQL query:", cursor.rowcount
 		WeatherData = { item:{} for item in Weather}	# You can only iterate through the cursor once so collect data here and then duplicate it over all locations after
 		for row in cursor:	# Each row may have multiple weather items
