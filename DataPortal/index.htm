@@ -4,11 +4,13 @@
 <script type="text/javascript" src="https://code.jquery.com/jquery-latest.js"></script>
 <script>
 BaseURL = "/getdata";
+LoadURL = "/getloclist";
 var jsondata;
 
 function DoDates() {	//uses current date
 MyForm = document.getElementById('MyForm');
-var now = new Date();	// Get today's date (and time)
+//var now = new Date();	// Get today's date (and time)
+var now = new Date("2017-09-30");
 MyForm.StartDate.value = MyForm.EndDate.value = now.toISOString().substr(0,10);	//Convert date to first 10 chars of ISO format
 DateWind(MyForm);
 }
@@ -45,72 +47,51 @@ function TitleCase2(str)  //this works on units
 {
 	return str.replace(/\w\S*/i, function(txt){return txt.charAt(0).toUpperCase() + txt.substr(1);});
 }
-
-function BuildTable(data, theform) {
-	var ListOfMeters = [];
-	j=0;
-	for (i = 0; i < theform.MeteredData.length; i++) {
-		if (theform.MeteredData[i].selected != " ") {
-			ListOfMeters[j] = toString(theform.MeteredData[i].selected.value)
-			j++;
+function BuildTable(data) {
+	data.contents.forEach(function(row){row[0] = new Date(row[0])})
+	tablehtml = "<table><tr>"
+	width = data.headers.length;
+	length = data.contents.length;
+	for (var i=0; i<width; i++){	// Builds the header html
+		tablehtml += "<th>" + data.headers[i] + "</th>" 
 		}
-	}
-	var ListOfLocs = [];
-	j=0;
-	for (i = 0; i < theform.Locations.length; i++) {
-		if (theform.Locations[i].selected != " ") {
-			ListOfLocs[j] = toString(theform.Locations[i].value)
-			j++;
+	tablehtml+= "</tr>";
+	for (var i=0; i<length; i++){	// Runs over each row
+		tablehtml += "<tr>";		// Each row needs a <tr>
+		for (var j=0; j<width; j++){	// Runs over each item. If its not the 0th (Date) or 1st (Place) item, convert the number, but avoid nulls
+			tablehtml += "<td>"
+			if (data.contents[i][j] == null) {tablehtml += "-"}	// Convert empty things
+			else if (j>1) {tablehtml += data.contents[i][j].toFixed(3)}	// All of these coloumns should be numerical
+			else if (j==0) {tablehtml += data.contents[i][j].toISOString()}	// Convert dates to something more readable
+			else {tablehtml += data.contents[i][j]}	// Only the name coloumn can be given as is.
+			tablehtml += "</td>"
 		}
+	tablehtml += "</tr>";
 	}
-	var ListOfWeather = [];
-	j=0;
-	for (i = 0; i < theform.WeatherData.length; i++) {
-		if (theform.WeatherData[i].selected != " ") {
-			ListOfWeather[j] = toString(theform.WeatherData[i].value)
-			j++;
-		}
-	}
-	var ListOfOccupancy = [];
-	j=0;
-	for (i = 0; i < theform.OccupancyData.length; i++) {
-		if (theform.OccupancyData[i].selected != " ") {
-			ListOfOccupancy[j] = toString(theform.OccupancyData[i].value)
-			j++;
-		}
-	}
-	var Sets = (ListOfMeters.concat(ListOfWeather)).concat(ListOfOccupancy);
-	tablehtml = "<table><tr><th>Time</th><th>Location</th>";
-	for (var i=0; i<(Object.keys(data[0]).length); i++){
-		if (Object.keys(data[0])[i] == 'Place' || Object.keys(data[0])[i] == 'Time'){  /* only want it to add columns of requested data, not extra time or place ones */
-			continue;
-		}
-		else {
-		tablehtml += "<th>" + TitleCase2(Object.keys(data[0])[i]) + "</th>"
-		}
-	}
-	tablehtml += "</tr>"
-	for (var i=0; i<data.length; i++) {
-		var d = new Date(data[i]['Time']);
-		tablehtml += "<tr><td>" + d.toUTCString() + "</td><td>" + TitleCase1(data[i]['Place']) + "</td>"
-		for (var j=0; j<(Object.keys(data[0]).length); j++){
-			if (Object.keys(data[0])[j] == 'Place' || Object.keys(data[0])[j] == 'Time'){
-				continue;
-			}
-			else {
-				if (typeof(data[i][Object.keys(data[j])[j]]) !== 'undefined'){
-					tablehtml += "<td>" + data[i][Object.keys(data[j])[j]].toFixed(3) + "</td>"    /*.toPrecision(3) or .toFixed(3) for sig figs or dec plas but doesn't work right now */
-				}
-				else {
-					tablehtml += "<td>" + "N/A" + "</td>"
-				}
-				}
-			}
-		
-		tablehtml += "</tr>"
-	}
-	tablehtml += "</table>";
+	tablehtml+= "</td></table>"
 	document.getElementById('MyTable').innerHTML = tablehtml;
+}
+
+function GetLocList() {
+		$.ajax({
+		   url: LoadURL,
+		   type: 'GET',
+		   dataType: 'json',
+		   retryTimeout: 10,
+		   retryCount: 0,
+		   retryLimit: 10,
+		   crossDomain: true,
+		   contentType: 'application/json',
+		   success: function(data, textStatus) {
+			   console.log(textStatus);
+			   loclist = data;
+			   console.log(Object.keys(loclist));
+			   categories = Object.keys(loclist).sort;
+			   },
+		   error: function(jqXHR,textStatus,errorThrown) {
+			   console.log(textStatus+" "+errorThrown);   //getting an error from here, carry on from here
+			   }
+			   });
 }
 function GetData(theform) {
 var StartDate = new Date(theform.StartDate.value);
@@ -140,10 +121,28 @@ for (i = 0; i < theform.WeatherData.length; i++) {
         ListOfWeather[i] = (theform.WeatherData[i].value)
     }
 }
-var Dload = "False"
-if (theform.Download.checked){
-	Dload = "True"
+
+var Parameters = { StartDate:theform.StartDate.value, EndDate:theform.EndDate.value, LocationSets:theform.LocationSets.value, IntegrationPeriod:theform.IntegrationPeriod.value, Locations:ListOfLocs, OccupancyData:theform.OccupancyData.value, WeatherData:ListOfWeather, MeteredData:ListOfMeters};
+
+	$.ajax({
+		url: BaseURL,
+		type: 'GET',
+		dataType: 'json',
+		retryTimeout: 10,
+		retryCount: 0,
+		retryLimit: 10,
+		crossDomain: true,
+		data: Parameters,
+		contentType: 'application/json',
+		success: function(data, textStatus) {
+			console.log(textStatus);
+			jsondata = data;
+			BuildTable(jsondata)
+			},
+		error: function(jqXHR,textStatus,errorThrown) { console.log(textStatus+" "+errorThrown); document.getElementById('MyTable').innerHTML = textStatus+" "+errorThrown }
+	});
 }
+
 function downloadCSV(csv, filename) {
 	var csvFile;
 	var downloadLink;
@@ -170,45 +169,22 @@ function exportTableToCSV(filename) {
 	for (var i = 0; i < rows.length; i++) {
 		var row = [], cols = rows[i].querySelectorAll("td, th");
 		for (var j = 0; j < cols.length; j++) {
-		if (cols[j].innerText.toString().indexOf(",") !== -1){
-			var thiscell = cols[j].innerText.toString().replace(",", " -")
-			if (thiscell.indexOf(":") !== -1){  /* if the cell contains the date strip down to format recognised by excel */
-				thiscell = thiscell.slice(6); /* removes day of week */
-				thiscell = thiscell.slice(0, -4) /* removes GMT part */
+		thiscell = cols[j].innerText.toString()
+		if (thiscell.includes(",")){
+			var thiscell = thiscell.replace(",", " -")
+		}
+		else if (thiscell.includes(":") ){  /* if the cell contains the date strip down to format recognised by excel */
+				thiscell = thiscell.replace("T"," "); /* swaps the T for a soace*/
+				thiscell = thiscell.slice(0, -1) /* removes timezone part */
 			}
-		}
-		else if (cols[j].innerText.toString().indexOf(",") == -1){
-			var thiscell = cols[j].innerText.toString()
-		}
 		row.push(thiscell);
 		}
 		csv.push(row.join(","));
 	}
 	// Download CSV file
-	downloadCSV(csv.join("\n"), filename);
+	downloadCSV(csv.join("\r\n"), filename);
 }
-var Parameters = { StartDate:theform.StartDate.value, EndDate:theform.EndDate.value, LocationSets:theform.LocationSets.value, IntegrationPeriod:theform.IntegrationPeriod.value, Locations:ListOfLocs, OccupancyData:theform.OccupancyData.value, WeatherData:ListOfWeather, MeteredData:ListOfMeters, Download:Dload};
-	$.ajax({
-		url: BaseURL,
-		type: 'GET',
-		dataType: 'json',
-		retryTimeout: 10,
-		retryCount: 0,
-		retryLimit: 10,
-		crossDomain: true,
-		data: Parameters,
-		contentType: 'application/json',
-		success: function(data, textStatus) {
-			console.log(textStatus);
-			jsondata = data;
-			BuildTable(jsondata, theform)
-		   if (Dload=="True"){
-			exportTableToCSV('portaldata.csv')
-		   };
-			},
-		error: function(jqXHR,textStatus,errorThrown) { console.log(textStatus+" "+errorThrown); document.getElementById('MyTable').innerHTML = textStatus+" "+errorThrown }
-	});
-}
+
 </script>
 <style>
 table {
@@ -329,7 +305,7 @@ input[type="radio"]
 }
 </style>
 </head>
-<body onload="DoDates();">
+<body onload="DoDates(); GetLocList(); LocLoad();">
 <div class="flex-container">
 <nav class="nav">
 <h2>Data Selection</h2>
@@ -400,20 +376,20 @@ input[type="radio"]
     Metered Data:
     <br>
     <select name="MeteredData" size=5 multiple>
+        <option value= "elec">Electricity</option>
         <option value= "gas">Gas</option>
         <option value= "water">Water</option>
-        <option value= "elec">Electricity</option>
         <option value= "heat">Heating</option>
         <option value= "cool">Cooling</option>
     </select><br>
     Weather Data:
     <br>
     <select name="WeatherData" size=5 multiple>
-        <option value= "wind_dir">Wind Direction</option>
-        <option value= "windspeed">Wind Speed</option>
-        <option value= "gustspeed">Wind Gust Speed</option>
         <option value= "temp">Temperature</option>
         <option value= "humidity">Relative Humidity</option>
+        <option value= "windspeed">Wind Speed</option>
+        <option value= "wind_dir">Wind Direction</option>
+        <option value= "gustspeed">Wind Gust Speed</option>
         <option value= "pressure">Pressure</option>
         <option value= "solar">Sunlight</option>
         <option value= "rain">Rainfall</option>
@@ -426,6 +402,9 @@ input[type="radio"]
     
     
 	Location(s): <br>
+	
+	<input type="radio" name="LocationSets" value="All" onclick="htmlchanger()"><p id="radio1">All</p>
+	
     <input type="radio" name="LocationSets" value="All" onclick="htmlchanger()">All<br>
     <input type="radio" name="LocationSets" value="Conferences" onclick="htmlchanger()">Conferences<br>
     <input type="radio" name="LocationSets" value="Main" onclick="htmlchanger()">Main Campus<br>
@@ -434,11 +413,7 @@ input[type="radio"]
 	<select id="locationlist" name="Locations" multiple size=10 style="display:none"required="True">
         
     </select>
-    <br><br>
-	
-	<input type="checkbox" name="Download" value="True">Download data?<br>
-    
-    <script>
+	<script>
 		function download(filename, text) {
 			var pom = document.createElement('a');
 			pom.setAttribute('href', 'data:text/plain;charset=utf-8,' + encodeURIComponent(text));
@@ -473,17 +448,16 @@ input[type="radio"]
 			modal.style.display = "none";
 		}
 	}
-        loclist = {
-					"All" : ["Conference Center 1", "Conference Center 2", "Main Campus Building A", "Main Campus Building B", "Residential Block One", "Residential Block Two"],
-					"Conferences" : ["Conference Center 1", "Conference Center 2"],
-					"Main" : ["Main Campus Building A", "Main Campus Building B"],
-					"Residencies" : ["Residential Block One", "Residential Block Two"]};
-          // This list is actually very big but is shortened here
+	loclist = []
 	
-		//could generate this from xls - more efficient but very difficult - this is a temporary fix but would require maintenance when new places were added in. NOT PRACTICAL LONG TERM
+	
 		
         groups = document.getElementById("MyForm");
-    
+		function LocLoad(){
+			document.getElementById("radio1").innerHTML = "Panther";
+			document.getElementById("radio1").style.display = "nones";
+			
+		}
         function htmlchanger(){
             rawhtml = "";
             for (item in loclist[MyForm.LocationSets.value]){
@@ -496,10 +470,11 @@ input[type="radio"]
     
 	<!--*Due to granularity of different data sets, <br>occupancy data takes 2x as long to <br>process as metered  and weather takes <br>30x as long. -->
     <br><br>
-	<input type="button" value="Get Data" name="BUTTON" onclick="GetData(this.parentElement)"><!-- Submitting is like following the link under the form "Action" but appending all of the field parameters after -->
+	<input type="button" value="Preview Data" name="BUTTON" onclick="GetData(this.parentElement)"><!-- Submitting is like following the link under the form "Action" but appending all of the field parameters after -->
+	<input type="button" value="Download Preview" name="BUTTON" onclick="exportTableToCSV('portaldata.csv')">
 </form>
 </nav>
-<article class="article" id="MyTable"></article>
+<article class="article" id="MyTable"><h1>This service was developed as a trial and may fail at any time without notice.<br>This system is only supported on a best effort basis by the Energy & Sustainability team within the Estates Office.</h1></article>
 </div>
 </body>
 </html>
