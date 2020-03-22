@@ -112,7 +112,6 @@ def GetResults(FormResults):
 	Start = datetime.datetime.strptime(FormResults['startdate'][0], "%Y-%m-%d")
 	Locations = FormResults['locations[]'] if 'locations[]' in FormResults else ['']
 	IntPeriod = FormResults['integrationperiod']
-#	AllData = []  #master list will contain all the data in uniform format - dictionary with 4 keys Data Time Place Type
 	WantedDataTypes = []	# Build a list of datatypes which are required - effectively the headings of the table
 	if "metereddata[]" in FormResults:
 		WantedDataTypes.extend(FormResults["metereddata[]"])
@@ -148,7 +147,7 @@ def GetResults(FormResults):
 			for entry in obj:
 				dt = datetime.datetime.strptime(entry['StartTime'][:19], "%Y-%m-%dT%H:%M:%S")	# Convert it to a native datetime ob. [:19] will ignore the Z if its there but wont mind if its not
 				if entry['IsGenerated']:
-					continue
+					continue	# Skip over Null data
 				else:
 					Count+=1	# Keep a tally of what's been obtained
 					if dt in AllData[item['Location']][item['DataType']]: # Check if this timestamp is there from another meter, just add it to get the total while applying the conversion factor on the way
@@ -204,10 +203,10 @@ def GetResults(FormResults):
 			for subset in enumerate(Weather,1):	# enumerate creates tuples like (1,wind_dir),(2,windspeed)... index starts at 1 since 0 will be the datetime
 				if row[subset[0]] == None:
 					continue	# Skip Null Entries - moves onto the next weather parameter
-				Count+=1	# Just count the valid item for info
-				WeatherData[subset[1]].update({row[0]:row[subset[0]]})	# The enumerate generator will give subset[0] as the number representing the row number from the SQL query, and subset[1] as the datatype
-#				AllData.append({'Time':row[0], 'Place':loc, 'Data':row[subset[0]], 'Type':subset[1]})	# NEW DATABASE
-#				AllData.append({'Time':unicode(row[0].isoformat()+'Z'), 'Place':loc, 'Data':row[subset[0]], 'Type':subset[1]})	# ORIGINAL REAL DATABASE
+				else:
+					Count+=1	# Just count the valid item for info
+					WeatherData[subset[1]].update({row[0]:row[subset[0]]})	# The enumerate generator will give subset[0] as the number representing the row number from the SQL query, and subset[1] as the datatype
+#					AllData.append({'Time':unicode(row[0].isoformat()+'Z'), 'Place':loc, 'Data':row[subset[0]], 'Type':subset[1]})	# ORIGINAL REAL DATABASE
 		conn.close()
 		for loc in AllData:	# Now the WeatherData can be duplicated in all Locations
 			AllData[loc].update(WeatherData)	# Update the data for the location to include all Weather Data
@@ -232,7 +231,6 @@ def IntegrationCalc(data, FormResults):		#matches integration period input by av
 			for bin in ( Start+i*Increment for i in xrange(int(number)) ):	# For each integration period with a with the start datetimes given by this generator...
 				Total=0	# Total for the average
 				Count=0	# Number of elements for the average
-				#for i in (item['Data'] for item in thelist if item['Time'] >= bin and item['Time'] < bin+Increment):	# For each element given by the generator which gives all data points within the given time window
 				for i in (data[loc][datatype][dt] for dt in data[loc][datatype] if bin <= dt < bin+Increment):	# Generator gives elements along the way. Includes start datetime but not end.
 					Total+=i	# Totalise as you go
 					Count+=1		# Count as you go
@@ -240,7 +238,7 @@ def IntegrationCalc(data, FormResults):		#matches integration period input by av
 					Averages[bin] = float(Total)/float(Count)	# Calculate Mean Average
 				except ZeroDivisionError:
 					pass	# Divide by zero error means Count was zero and so there was nothing in this time so just move on
-			data[loc][datatype]=Averages
+			data[loc][datatype]=Averages	# Replace the existing data with the new averages - may potentially be an empty dict
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "IntegrationCalc end"
 	return data
 
@@ -262,14 +260,10 @@ def InLineResults(data, FormResults):
 	WhatWeGot = [col for col in AvailableData if col in WhatWeGot]	# Turn this into an ordered list in the correct order
 	TableHead = ['Time', 'Place'] + [col.title()+units[col] for col in WhatWeGot]	# Table Headings will be of the title and units for the datasets in the order given by AvailableData
 	print 'Proposed Table Heading',TableHead
-	a,b = InLineDict.keys()[0]
-	print [a, b]+list(itemgetter(*WhatWeGot)(InLineDict[a,b]))
-	TableContents = [[dt, loc]+list(itemgetter(*WhatWeGot)(InLineDict[dt,loc])) for dt,loc in sorted(InLineDict.keys(), key=itemgetter(1,0))]	# Creates a row list from the timestamp and location, followed by a list of values from the dictionary as required by the table coloumns. Keys from WhatWeGot which is in the correct order, and the data itself is added in order of location first, and then datetime
-	print 'TableContents Length:',len(TableContents)
-	print 'First line of proposed table contents:',TableContents[0]	# Just shows the first entry from the generator
-	#InLineList = [dict([('Time',dt), ('Place',loc)] + InLineDict[(dt,loc)].items()) for dt,loc in InLineDict]
-	# The inline list should eventually be stripped of dicionaries to reduce transfer payload and simplify the javascript end.
-	# Propose to be a list of rows, containing lists of all data in correct order, with the 0th row being all of the headings for the table (i.e. the keys from InLineDict)
+	if len(WhatWeGot) == 1:
+		TableContents = [[dt, loc, InLineDict[dt,loc][WhatWeGot[0]]] for dt,loc in sorted(InLineDict.keys(), key=itemgetter(1,0))]
+	else:
+		TableContents = [[dt, loc]+list(itemgetter(*WhatWeGot)(InLineDict[dt,loc])) for dt,loc in sorted(InLineDict.keys(), key=itemgetter(1,0))]	# Creates a row list from the timestamp and location, followed by a list of values from the dictionary as required by the table coloumns. Keys from WhatWeGot which is in the correct order, and the data itself is added in order of location first, and then datetime
 	InLineList = {'headers':TableHead, 'contents':TableContents}
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "InLineResults end"
 	return InLineList
