@@ -110,10 +110,18 @@ def GetResults(FormResults):
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "GetResults begin"
 	Start = FormResults['startdate'][0]
 	End = FormResults['enddate'][0]
-	LocationSets = FormResults['locationsets']
 	Locations = FormResults['locations[]'] if 'locations[]' in FormResults else ['']
 	IntPeriod = FormResults['integrationperiod']
-	AllData = []  #master list will contain all the data in uniform format - dictionary with 4 keys Data Time Place Type
+#	AllData = []  #master list will contain all the data in uniform format - dictionary with 4 keys Data Time Place Type
+	WantedDataTypes = []
+	if "metereddata[]" in FormResults:
+		WantedDataTypes.extend(FormResults["metereddata[]"])
+	if "occupancydata" in FormResults:
+		WantedDataTypes.append('wifi')
+	if "weatherdata[]" in FormResults:
+		WantedDataTypes.extend(FormResults["weatherdata[]"])
+	AllData = { loc:{ datatype:{} for datatype in WantedDataTypes } for loc in Locations }
+	Count=0
 	if "metereddata[]" in FormResults:
 		Metered = FormResults["metereddata[]"]
 		WantId = []
@@ -141,14 +149,19 @@ def GetResults(FormResults):
 				if entry['Time'] > datetime.datetime.now():
 					del entry	# Throw it away if its not needed before any further processing is done on it
 					continue
-				entry['Data'] = (entry['PeriodValue'] * conversionFactor)
-				if item['MeterType'] == 'VirtualMeter':
-					entry['Place'] = "v" + str(item['Meter'])
-				else:
-					entry['Place'] = item['Meter']
-				entry['Type'] = item['DataType']
-				del entry['Duration'], entry['IsGenerated'], entry['IsEstimated'], entry['PeriodValue'], entry['TotalValue'], entry['StartTime']
-				AllData.append(entry)
+				Count+=1
+				try:
+					AllData[item['Location']][item['DataType']][datetime.datetime.strptime(entry['StartTime'][:19], "%Y-%m-%dT%H:%M:%S")] += (entry['PeriodValue'] * conversionFactor)
+				except KeyError:
+					AllData[item['Location']][item['DataType']][datetime.datetime.strptime(entry['StartTime'][:19], "%Y-%m-%dT%H:%M:%S")] = (entry['PeriodValue'] * conversionFactor)
+#				entry['Data'] = (entry['PeriodValue'] * conversionFactor)
+#				if item['MeterType'] == 'VirtualMeter':
+#					entry['Place'] = "v" + str(item['Meter'])
+#				else:
+#					entry['Place'] = item['Meter']
+#				entry['Type'] = item['DataType']
+#				del entry['Duration'], entry['IsGenerated'], entry['IsEstimated'], entry['PeriodValue'], entry['TotalValue'], entry['StartTime']
+#				AllData.append(entry)
 	if "occupancydata" in FormResults:
 		End = datetime.datetime.strptime(FormResults['enddate'][0], "%Y-%m-%d") + datetime.timedelta(days=1)
 		Start = datetime.datetime.strptime(FormResults['startdate'][0], "%Y-%m-%d")
@@ -165,18 +178,25 @@ def GetResults(FormResults):
 		elif len(Locations) >= 1:   #if place not empty, return data for places
 			IdList = []
 			TempStore = []
+			IDLocs = {}
 			for x in Locations:
-				for set in LocRefs:
-					if x == str(set['loc']):
-						TempStore.append(set)
+				for a in LocRefs:
+					if x == str(a['loc']):
+						TempStore.append(a)
 			for item in TempStore:
 				for wmeter in item['wifilist']:
 					IdList.append(wmeter)
+					IDLoc[wmeter] = item['loc']
 			cursor.execute('SELECT dateTime as "dateTime [DATETIME]", locId, count FROM WifiData WHERE (dateTime BETWEEN ? AND ?) AND (locId in (?))', (Start, End, ','.join(str(id) for id in IdList))) # TEST DATABASE
 #			cursor.execute("SELECT * FROM WifiData WHERE (dateTime BETWEEN %s AND %s) AND (locId in %s)", (Start, End, IdList))	# REAL DATABASE
 			print "Items from SQL query:", cursor.rowcount
 		for row in cursor:
-			AllData.append({'Time':row[0], 'Place':row[1], 'Data':row[2], 'Type':'Wifi'})	# TEST DATABASE
+			Count+=1
+			try:
+				AllData[IDLoc[row[1]]]['wifi'][row[0]] += row[2]
+			except KeyError:
+				AllData[IDLoc[row[1]]]['wifi'][row[0]] = row[2]
+#			AllData.append({'Time':row[0], 'Place':row[1], 'Data':row[2], 'Type':'Wifi'})	# TEST DATABASE
 #			AllData.append({'Time':row[0], 'Place':row[1], 'Data':row[2], 'Type':'Wifi'})	# REAL DATABASE
 #			AllData.append({'Time':unicode(row[0].isoformat()+'Z'), 'Place':row[1], 'Data':row[2], 'Type':'Wifi'})	# ORIGINAL REAL DATABASE
 		conn.close()
@@ -200,13 +220,15 @@ def GetResults(FormResults):
 		for row in cursor:	# Each row may have multiple weather items
 			for subset in enumerate(Weather,1):	# enumerate creates tuples like (1,wind_dir),(2,windspeed)... index starts at 1 since 0 will be the datetime
 				for x in Locations:
-					AllData.append({'Time':row[0], 'Place':x, 'Data':row[subset[0]], 'Type':subset[1]})	# NEW DATABASE
+					Count+=1
+					AllData[x][subset[1]][row[0]] = row[subset[0]]
+#					AllData.append({'Time':row[0], 'Place':x, 'Data':row[subset[0]], 'Type':subset[1]})	# NEW DATABASE
 #					AllData.append({'Time':unicode(row[0].isoformat()+'Z'), 'Place':x, 'Data':row[subset[0]], 'Type':subset[1]})	# ORIGINAL REAL DATABASE
 		conn.close()
-	print "Total items in AllData: {}".format(len(AllData))
+	print "Total items retreived:", Count
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "GetResults end"
 	return AllData
-
+'''
 def AddReads(data, FormResults):   #function adds readings from multiple meters to give total for buildings
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "AddReads begin"
 	NewData = []
@@ -254,18 +276,20 @@ def AddReads(data, FormResults):   #function adds readings from multiple meters 
 						NewData.append({'Time':x['Time'], 'Place':item, 'Type':x['Type'], 'Data':counter})   # if entry is new, append to NewData list
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "AddReads end"
 	return NewData
-
+'''
 
 def IntegrationCalc(data, FormResults):		#matches integration period input by averaging. for all inputs smaller than day, returns first entry as is, then all other results come from averaging data over previous increment in time. ie 03/07/2017 12:00 for HalfHour is average of data from 12:31 --> 12:00 inclusive.  For higher increments it is the opposite - 03/07/2017 00:00 for Day is the average from 00:00 --> 23:59 that day.
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "IntegrationCalc begin"
-	ignorelist = ['gas', 'water', 'elec', 'heat', 'cool']   # the data that comes from the DCS already has intperiod built in, so we don't want to change entries of these types.
-	Locations = FormResults['locations[]'] if 'locations[]' in FormResults else ['']
-	IntData = []  # initialise the list that will be returned
+#	ignorelist = ['gas', 'water', 'elec', 'heat', 'cool']   # the data that comes from the DCS already has intperiod built in, so we don't want to change entries of these types.
+#	Locations = FormResults['locations[]'] if 'locations[]' in FormResults else ['']
+	IntPeriod = FormResults['integrationperiod'][0]
+	Start = datetime.datetime.strptime(FormResults['startdate'][0], "%Y-%m-%d")  # convert starttime into datetime object to allow timedelta
+	End = datetime.datetime.strptime(FormResults['enddate'][0], "%Y-%m-%d") + datetime.timedelta(days=1)
+	'''IntData = []  # initialise the list that will be returned
 	for place in Locations:
 		wind_dirl, windspeedl, gustspeedl, templ, humidityl, pressurel, solarl, rainl, wifil = [], [], [], [], [], [], [], [], []  # lists for each type of data to be put into so that list can be iterated over
 		IntPeriod = FormResults['integrationperiod'][0]
-		Start = FormResults['startdate'][0]
-		Start = datetime.datetime.strptime(Start, "%Y-%m-%d")  # convert starttime into datetime object to allow timedelta
+		Start = datetime.datetime.strptime(FormResults['startdate'][0], "%Y-%m-%d")  # convert starttime into datetime object to allow timedelta
 		data.sort(key=itemgetter('Time'), reverse=False)  # sorts the data into ascending order by date
 		for item in data:				# in this section the entries get sorted into lists by type
 			if item['Type'].lower() == "wind_dir":
@@ -290,18 +314,17 @@ def IntegrationCalc(data, FormResults):		#matches integration period input by av
 				IntData.append(item)
 				continue
 		alllists = [wind_dirl, windspeedl, gustspeedl, templ, humidityl, pressurel, solarl, rainl, wifil]  #list of lists
-		End = FormResults['enddate'][0]
-		End = datetime.datetime.strptime(End, "%Y-%m-%d")
-		End = End + datetime.timedelta(days=1) #+ datetime.timedelta(minutes=-1)
-		for thelist in alllists:
-			if len(thelist) == 0:
+		for thelist in alllists:'''
+	for loc in data:
+		for datatype in data[loc]:
+			if len(data[loc][datatype]) == 0:
 				continue
 			if IntPeriod == 'minute':  #custom - minute is finest precision --> all sets in original frequency
-				IntData.extend(thelist)
+				#IntData[loc][datatype]=data[loc][datatype]
 				continue
 			elif IntPeriod == 'quarterhour':  #custom - continue at end to skip all bottom bit
-				if thelist == wifil:
-					IntData.extend(thelist)
+				if datatype == 'wifi':
+					#IntData[loc][datatype]=data[loc][datatype]
 					continue
 				else:
 					Increment = datetime.timedelta(minutes=15)
@@ -318,18 +341,20 @@ def IntegrationCalc(data, FormResults):		#matches integration period input by av
 			for bin in ( Start+i*Increment for i in xrange(int(number)) ):	# For each integration period with a with the start datetimes given by this generator...
 				Total=0	# Total for the average
 				Count=0	# Number of elements for the average
-				for i in (item['Data'] for item in thelist if item['Time'] >= bin and item['Time'] < bin+Increment):	# For each element given by the generator which gives all data points within the given time window
+				#for i in (item['Data'] for item in thelist if item['Time'] >= bin and item['Time'] < bin+Increment):	# For each element given by the generator which gives all data points within the given time window
+				for i in (data[loc][datatype][dt] for dt in data[loc][datatype] if bin+Increment > dt >= bin):
 					Total+=i	# Totalise as you go
 					Count+=1		# Count as you go
 				try:
 					Averages[bin] = float(Total)/float(Count)	# Calculate Mean Average
 				except ZeroDivisionError:
 					pass	# Divide by zero error means Count was zero and so there was nothing in this time so just move on
-			for entry in Averages:
-				IntData.append({'Data':Averages[entry], 'Time':entry, 'Type':thelist[0]['Type'], 'Place':place})
-			del Averages
+			data[loc][datatype]=Averages
+#			for entry in Averages:
+#				IntData.append({'Data':Averages[entry], 'Time':entry, 'Type':thelist[0]['Type'], 'Place':place})
+#			del Averages
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "IntegrationCalc end"
-	return IntData
+	return data
 
 def InLineResults(data, FormResults):
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "InLineResults begin"
@@ -340,8 +365,12 @@ def InLineResults(data, FormResults):
 		AddCols.extend(FormResults['weatherdata[]'])
 	if 'occupancydata' in FormResults:
 		AddCols.extend(FormResults['occupancydata'])
-	InLineData = []
-	for x in data:
+	InLineDict = {}
+	for loc in data:
+		for datatype in data[loc]:
+			InLineDict[(dt,loc)].update({(datatype+units[datatype]):data[loc][datatype][dt]})
+	InLineList = sorted( {'Time':dt, 'Place':loc}.update(InLineDict[(dt,loc)]) for dt,loc in InLineDict )
+	'''for x in data:
 		#x['Type'] = x['Type'] + units[x['Type']]
 		datastore = {'Time':x['Time'], 'Place':x['Place'], x['Type']+units[x['Type']]:x['Data']}
 		for y in data:
@@ -350,9 +379,9 @@ def InLineResults(data, FormResults):
 		if datastore in InLineData:
 			continue
 		else:
-			InLineData.append(datastore)
+			InLineData.append(datastore)'''
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "InLineResults end"
-	return InLineData
+	return InLineList
 
 
 
@@ -402,7 +431,7 @@ class CustomHandler(SimpleHTTPRequestHandler):	# Based on Python Standard Librar
 			self.send_header('Content-Type','application/json')
 			self.end_headers()	# CORS compatible headers given
 			Data = GetResults(QuerySplit) #function that gets the raw data
-			Data = AddReads(Data, QuerySplit) #function that adds the readings together where needed
+			#Data = AddReads(Data, QuerySplit) #function that adds the readings together where needed
 			Data = IntegrationCalc(Data, QuerySplit)
 			Data = InLineResults(Data, QuerySplit)
 			Data.sort(key=itemgetter('Time'), reverse=False)  # sorts the data into ascending order by date
