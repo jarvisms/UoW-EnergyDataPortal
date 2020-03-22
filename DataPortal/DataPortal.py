@@ -18,7 +18,7 @@ SQLserver = "SERVER"
 SQLUser = "USERNAME"
 SQLPassword = "PASSWORD"
 SQLdb = "db_EnergyDataPortal"
-AvailableData=['elec', 'gas', 'water', 'heat', 'cool', 'wifi', 'temp', 'humidity', 'windspeed', 'wind_dir', 'gustspeed', 'pressure', 'solar', 'rain']	# Sets what data is available and order the coloumns should appear in
+AvailableData=tuple(['elec', 'gas', 'water', 'heat', 'cool', 'wifi', 'temp', 'humidity', 'windspeed', 'wind_dir', 'gustspeed', 'pressure', 'solar', 'rain'])	# Sets what data is available and order the coloumns should appear in
 units = {"gas":' (kWh)', "water":' (m3)', "elec":' (kWh)', "heat":' (kWh)', "cool":' (kWh)', "wind_dir":' (deg from N)', "windspeed":' (ms-1)', "gustspeed":' (ms-1)', "temp":' (deg C)', "humidity":' (%)', "pressure": ' (mB)', "solar":' (Wm-2)', "rain":' (mm since 00:00)', "wifi":' (devices)'}	# Defines the units to use for coloumns
 # Instead of just reading it from the server every time, the following try to read from cached files, but if they dont exist, then use the server and save it for next time
 try:
@@ -55,6 +55,19 @@ def adapt_datetime(dt): # Adapter so that SQLite3 can accept datetimes but store
 
 def convert_datetime(b): # Converter so that SQLite3 can retreive efficient integers and return them as datetimes
 	return datetime.datetime.fromtimestamp(int(b))
+
+class JSONGen(list):	# Create a subclass of list so that the json module will think its a list and encode it
+ def __init__(self,gen,len=0):	# There will be two items, a standard generator to make appear as a list, and what should end up being the length of the list/generator, although this can be any number
+  self.gen = gen	# The input generator
+  self.len = abs(int(len))	# The input predicted length, which will be converted to a positive integer just in case
+ def __iter__(self):	# As required by the iterator protocol
+  return self
+ def __next__(self):	# Future Python3 compatible, just an alias for .next()
+  return self.next()
+ def next(self):	# Iterates through the underlying input generator
+  return next(self.gen)
+ def __len__(self):	# Gives the predicted length
+  return self.len
 
 sqlite3.register_adapter(datetime.datetime, adapt_datetime)
 sqlite3.register_converter("DATETIME", convert_datetime)
@@ -259,33 +272,30 @@ def IntegrationCalc(data, FormResults):		#matches integration period input by av
 
 def InLineResults(data, FormResults):
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "InLineResults begin"
-	InLineDict = {}	# Will be keyed by (datetime, location) tuples, and contains dicts with all coloumns data
-	WhatWeGot = [col for col in AvailableData if col in set(datatype for loc in data for datatype in data[loc])]	# All of the data types that we have in an order list
-	Timestamps = set ( timestamp for loc in data for datatype in data[loc] for timestamp in data[loc][datatype] )	# All of the timestanmps we have
-	for loc in data:
-		for datatype in data[loc]:
-			for dt in data[loc][datatype]:
-				if (dt,loc) in InLineDict:	# If this (dt,loc) combination already has some data coloumnd, add these ones to it
-					InLineDict[(dt,loc)].update({datatype:data[loc][datatype][dt]})
-				else:	# Otherwise this is the first bit of data
-					InLineDict[(dt,loc)] = {datatype:data[loc][datatype][dt]}
-	del data	# Free up some resources - its all now reshaped into InLineDict
-	for item in InLineDict:	# Run through again and fill in missing fields with None
-		InLineDict[item].update({datatype:None for datatype in WhatWeGot if datatype not in InLineDict[item]})
-	TableHead = ['Time', 'Place'] + [col.title()+units[col] for col in WhatWeGot]	# Table Headings will be of the title and units for the datasets in the order given by AvailableData
+	#InLineDict = {}	# Will be keyed by (datetime, location) tuples, and contains dicts with all coloumns data
+	WhatWeGot =  tuple ( col for col in AvailableData if col in set(datatype for loc in data for datatype in data[loc] ) )	# All of the data types that we have in an order tuple
+	Timestamps = tuple ( sorted ( set ( timestamp for loc in data for datatype in data[loc] for timestamp in data[loc][datatype] ) ) )	# All of the timestanmps we have sorted into a tuple
+	#for loc in data:
+	#	for datatype in data[loc]:
+	#		for dt in data[loc][datatype]:
+	#			if (dt,loc) in InLineDict:	# If this (dt,loc) combination already has some data coloumnd, add these ones to it
+	#				InLineDict[(dt,loc)].update({datatype:data[loc][datatype][dt]})
+	#			else:	# Otherwise this is the first bit of data
+	#				InLineDict[(dt,loc)] = {datatype:data[loc][datatype][dt]}
+	#data = None
+	#del data	# Free up some resources - its all now reshaped into InLineDict
+	#for item in InLineDict:	# Run through again and fill in missing fields with None
+	#	InLineDict[item].update({datatype:None for datatype in WhatWeGot if datatype not in InLineDict[item]})
+	TableHead = tuple( ['Time', 'Place'] + [col.title()+units[col] for col in WhatWeGot] )	# Table Headings will be of the title and units for the datasets in the order given by AvailableData
 	print 'Proposed Table Heading',TableHead
-	if len(WhatWeGot) == 1:
-		TableContents = [[dt, loc, InLineDict[dt,loc][WhatWeGot[0]]] for dt,loc in sorted(InLineDict.keys(), key=itemgetter(1,0))]
-	else:
-		TableContents = [[dt, loc]+list(itemgetter(*WhatWeGot)(InLineDict[dt,loc])) for dt,loc in sorted(InLineDict.keys(), key=itemgetter(1,0))]	# Creates a row list from the timestamp and location, followed by a list of values from the dictionary as required by the table coloumns. Keys from WhatWeGot which is in the correct order, and the data itself is added in order of location first, and then datetime
-	'''TableContents = []
-	if len(WhatWeGot)>1:
-		for loc in data:
-			for dt in Timestamps:
-				for datatype in WhatWeGot:
-					if datatype in data[loc] and dt in data[loc][datatype]:
-						TableContents.append( [ [dt,loc] + []
-'''
+	#if len(WhatWeGot) == 1:
+	#	TableContents = [[dt, loc, InLineDict[dt,loc][WhatWeGot[0]]] for dt,loc in sorted(InLineDict.keys(), key=itemgetter(1,0))]
+	#else:
+	#	TableContents = [[dt, loc]+list(itemgetter(*WhatWeGot)(InLineDict[dt,loc])) for dt,loc in sorted(InLineDict.keys(), key=itemgetter(1,0))]	# Creates a row list from the timestamp and location, followed by a list of values from the dictionary as required by the table coloumns. Keys from WhatWeGot which is in the correct order, and the data itself is added in order of location first, and then datetime
+	TCGen = ( [dt,loc] + [ data[loc][datatype][dt] if (datatype in data[loc] and dt in data[loc][datatype]) else None for datatype in WhatWeGot ] for loc in data for dt in Timestamps ) # Generator creates each line as it goes when iterated over
+	rowcount = len(data) * len(Timestamps)	# This should be how many rows there will be, partly just for information
+	TableContents = JSONGen(TCGen,rowcount)	# Wrap the generator and predicted length into the JSONGen class so that the json module treats the generator as if its a list.
+	print 'There should be {} rows of data'.format(rowcount)
 	InLineList = {'headers':TableHead, 'contents':TableContents}
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "InLineResults end"
 	return InLineList
