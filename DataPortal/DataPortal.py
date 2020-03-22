@@ -215,6 +215,21 @@ def GetResults(FormResults):
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "GetResults end"
 	return AllData
 
+def Integegrate(data,Start,End,Period):
+	Intervals = (End - Start).total_seconds()/Period.total_seconds()
+	Averages = dict()	# Empty Directory to be populated by averages shortly
+	for bin in ( Start+i*Period for i in xrange(int(Intervals)) ):	# For each integration period with a with the start datetimes given by this generator...
+		Total=0	# Total for the average
+		Count=0	# Number of elements for the average
+		for i in (data[dt] for dt in data if bin <= dt < bin+Period):	# Generator gives elements along the way. Includes start datetime but not end.
+			Total+=i	# Totalise as you go
+			Count+=1		# Count as you go
+		try:
+			Averages[bin] = float(Total)/float(Count)	# Calculate Mean Average
+		except ZeroDivisionError:
+			Averages[bin] = None	# Divide by zero error means Count was zero and so there was nothing in this period so store None
+	return Averages
+
 def IntegrationCalc(data, FormResults):		#matches integration period input by averaging. for all inputs smaller than day, returns first entry as is, then all other results come from averaging data over previous increment in time. ie 03/07/2017 12:00 for HalfHour is average of data from 11:31 --> 12:00 inclusive.  For higher increments it is the opposite - 03/07/2017 00:00 for Day is the average from 00:00 --> 23:59 that day.
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "IntegrationCalc begin"
 	IntPeriod = FormResults['integrationperiod'][0]
@@ -237,7 +252,7 @@ def IntegrationCalc(data, FormResults):		#matches integration period input by av
 				try:
 					Averages[bin] = float(Total)/float(Count)	# Calculate Mean Average
 				except ZeroDivisionError:
-					pass	# Divide by zero error means Count was zero and so there was nothing in this time so just move on
+					Averages[bin] = None	# Divide by zero error means Count was zero and so there was nothing in this period so store None
 			data[loc][datatype]=Averages	# Replace the existing data with the new averages - may potentially be an empty dict
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "IntegrationCalc end"
 	return data
@@ -245,10 +260,10 @@ def IntegrationCalc(data, FormResults):		#matches integration period input by av
 def InLineResults(data, FormResults):
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "InLineResults begin"
 	InLineDict = {}	# Will be keyed by (datetime, location) tuples, and contains dicts with all coloumns data
-	WhatWeGot = set()	# Ready to list the datasets we actually managed to obtain to make coloumns. Missing data wont be shown at all.
+	WhatWeGot = [col for col in AvailableData if col in set(datatype for loc in data for datatype in data[loc])]	# All of the data types that we have in an order list
+	Timestamps = set ( timestamp for loc in data for datatype in data[loc] for timestamp in data[loc][datatype] )	# All of the timestanmps we have
 	for loc in data:
 		for datatype in data[loc]:
-			WhatWeGot.add(datatype)	# Add this to the set of what we have if its not already there
 			for dt in data[loc][datatype]:
 				if (dt,loc) in InLineDict:	# If this (dt,loc) combination already has some data coloumnd, add these ones to it
 					InLineDict[(dt,loc)].update({datatype:data[loc][datatype][dt]})
@@ -257,13 +272,20 @@ def InLineResults(data, FormResults):
 	del data	# Free up some resources - its all now reshaped into InLineDict
 	for item in InLineDict:	# Run through again and fill in missing fields with None
 		InLineDict[item].update({datatype:None for datatype in WhatWeGot if datatype not in InLineDict[item]})
-	WhatWeGot = [col for col in AvailableData if col in WhatWeGot]	# Turn this into an ordered list in the correct order
 	TableHead = ['Time', 'Place'] + [col.title()+units[col] for col in WhatWeGot]	# Table Headings will be of the title and units for the datasets in the order given by AvailableData
 	print 'Proposed Table Heading',TableHead
 	if len(WhatWeGot) == 1:
 		TableContents = [[dt, loc, InLineDict[dt,loc][WhatWeGot[0]]] for dt,loc in sorted(InLineDict.keys(), key=itemgetter(1,0))]
 	else:
 		TableContents = [[dt, loc]+list(itemgetter(*WhatWeGot)(InLineDict[dt,loc])) for dt,loc in sorted(InLineDict.keys(), key=itemgetter(1,0))]	# Creates a row list from the timestamp and location, followed by a list of values from the dictionary as required by the table coloumns. Keys from WhatWeGot which is in the correct order, and the data itself is added in order of location first, and then datetime
+	'''TableContents = []
+	if len(WhatWeGot)>1:
+		for loc in data:
+			for dt in Timestamps:
+				for datatype in WhatWeGot:
+					if datatype in data[loc] and dt in data[loc][datatype]:
+						TableContents.append( [ [dt,loc] + []
+'''
 	InLineList = {'headers':TableHead, 'contents':TableContents}
 	print datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f'), "InLineResults end"
 	return InLineList
